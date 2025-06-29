@@ -53,43 +53,46 @@ class LubimyCzytacProvider {
       console.log(`Current time: ${currentTime}`);
       console.log(`Input details: "${query}" by "${author}"`);
 
-      if (!author && query.includes("-")) {
-        author = query.split("-")[0].replace(/\./g, " ").trim();
-      } else {
-        author = author.split("-")[0].replace(/\./g, " ").trim();
+      let extractedAuthor = author;
+      let cleanedTitle = query;
+
+      // New, more robust parsing logic for "Author - Title (year) [tags]" format
+      if (!author && query.includes(' - ')) {
+          const parts = query.split(' - ');
+          if (parts.length > 1) {
+              extractedAuthor = parts[0].trim();
+              // In case title itself contains ' - ', we join the rest back.
+              cleanedTitle = parts.slice(1).join(' - ').trim();
+          }
       }
 
-      console.log("Extracted author: ", author);
+      console.log("Extracted author: ", extractedAuthor);
 
-      let cleanedTitle = query;
+      // General purpose cleaning for the title, removing common audiobook folder tags
       if (!/^".*"$/.test(cleanedTitle)) {
-        cleanedTitle = cleanedTitle.replace(/(\d+kbps)/g, '')
-          .replace(/\bVBR\b.*$/gi, '')
-          .replace(/^[\w\s.-]+-\s*/g, '')
-          .replace(/czyt.*/gi, '')
-          .replace(/.*-/, '')
-          .replace(/.*?(T[\s.]?\d{1,3}).*?(.*)$/i, '$2')
-          .replace(/.*?(Tom[\s.]?\d{1,3}).*?(.*)$/i, '$2')
-          .replace(/.*?\(\d{1,3}\)\s*/g, '')
-          .replace(/\(.*?\)/g, '')
-          .replace(/\[.*?\]/g, '')
-          .replace(/\(/g, ' ')
-          .replace(/[^\p{L}\d]/gu, ' ')
-          .replace(/\./g, ' ')
-          .replace(/\s+/g, ' ')
-          .replace(/superprodukcja/i, '')
+        cleanedTitle = cleanedTitle
+          .replace(/\s*\(\d{4}\)/g, '')      // Remove (YYYY)
+          .replace(/\s*\[.*?\]/g, '')       // Remove [anything inside brackets]
+          .replace(/(\d+kbps)/gi, '')         // Remove bitrate info
+          .replace(/\bVBR\b.*$/gi, '')      // Remove VBR info
+          .replace(/czyt\. .*/i, '')           // Remove "czyt. ..."
+          .replace(/superprodukcja/i, '')    // Remove "superprodukcja"
+          .replace(/audiobook/i, '')         // Remove "audiobook"
+          .replace(/\s*PL$/i,'')             // Remove "PL" at the end
           .trim();
       } else {
+        // Handle titles that are explicitly quoted
         cleanedTitle = cleanedTitle.replace(/^"(.*)"$/, '$1');
       }
 
       console.log("Extracted title: ", cleanedTitle);
 
+
       let booksSearchUrl = `${this.baseUrl}/szukaj/ksiazki?phrase=${encodeURIComponent(cleanedTitle)}`;
       let audiobooksSearchUrl = `${this.baseUrl}/szukaj/audiobooki?phrase=${encodeURIComponent(cleanedTitle)}`;
-      if (author) {
-        booksSearchUrl += `&author=${encodeURIComponent(author)}`;
-        audiobooksSearchUrl += `&author=${encodeURIComponent(author)}`;
+      if (extractedAuthor) {
+        booksSearchUrl += `&author=${encodeURIComponent(extractedAuthor)}`;
+        audiobooksSearchUrl += `&author=${encodeURIComponent(extractedAuthor)}`;
       }
 
       console.log('Books Search URL:', booksSearchUrl);
@@ -108,9 +111,9 @@ class LubimyCzytacProvider {
         const titleSimilarity = stringSimilarity.compareTwoStrings(match.title.toLowerCase(), cleanedTitle.toLowerCase());
 
         let combinedSimilarity;
-        if (author) {
+        if (extractedAuthor) {
           const authorSimilarity = Math.max(...match.authors.map(a =>
-            stringSimilarity.compareTwoStrings(a.toLowerCase(), author.toLowerCase())
+            stringSimilarity.compareTwoStrings(a.toLowerCase(), extractedAuthor.toLowerCase())
           ));
           // Combine title and author similarity scores if author is provided
           combinedSimilarity = (titleSimilarity * 0.6) + (authorSimilarity * 0.4);
@@ -143,7 +146,6 @@ class LubimyCzytacProvider {
     }
   }
 
-// ADDED THIS FUNCTION BACK:
   parseSearchResults(responseData, type) {
     const decodedData = this.decodeText(responseData);
     const $ = cheerio.load(decodedData);
@@ -182,29 +184,95 @@ class LubimyCzytacProvider {
       const decodedData = this.decodeText(response.data);
       const $ = cheerio.load(decodedData);
 
-      const cover = $('meta[property="og:image"]').attr('content') || '';
-      const publisher = $('dt:contains("Wydawnictwo:")').next('dd').find('a').text().trim() || '';
+      const cover = $('img.img-fluid').attr('src') || $('meta[property="og:image"]').attr('content') || '';
+      
+      // Publisher
+      let publisher = $('span.book__txt a[href*="/wydawnictwo/"]').text().trim();
+      if (!publisher) {
+         publisher = $('dt:contains("Wydawnictwo:")').next('dd').find('a').text().trim()
+      }
+
+      // Languages
       const languages = $('dt:contains("Język:")').next('dd').text().trim().split(', ') || [];
-      const description = $('.collapse-content').html() || $('meta[property="og:description"]').attr('content') || '';
-      const seriesElement = $('span.d-none.d-sm-block.mt-1:contains("Cykl:")').find('a').text().trim();
-      const series = this.extractSeriesName(seriesElement);
-      const seriesIndex = this.extractSeriesIndex(seriesElement);
+
+      const description = $('.collapse-content-js').html() || $('.book-description-container__description-text').html() || $('meta[property="og:description"]').attr('content') || '';
+      
+      // Series extraction
+      let seriesName = null;
+      let seriesIndex = null;
+
+      const seriesElement = $('span.d-none.d-sm-block.mt-1:contains("Cykl:") a, span.d-none.d-sm-block.mt-1:contains("Seria:") a').first().text().trim();
+      if(seriesElement) {
+          seriesName = this.extractSeriesName(seriesElement);
+          seriesIndex = this.extractSeriesIndex(seriesElement);
+      }
+
       const genres = this.extractGenres($);
       const tags = this.extractTags($);
-      const rating = parseFloat($('meta[property="books:rating:value"]').attr('content')) / 2 || null;
-      const isbn = $('meta[property="books:isbn"]').attr('content') || '';
+      const ratingValue = $('.rating-value .big-number').text().trim().replace(',', '.');
+      const rating = parseFloat(ratingValue) ? parseFloat(ratingValue) / 10 * 5 : null;
+      const isbn = $('dt:contains("ISBN:")').next('dd').text().trim() || $('meta[property="books:isbn"]').attr('content') || '';
 
-      let publishedDate, pages;
-      try {
-        publishedDate = this.extractPublishedDate($);
-        pages = this.extractPages($);
-      } catch (error) {
-        console.error('Error extracting published date or pages:', error.message);
+      // Fallback author
+      if (!match.authors || match.authors.length === 0) {
+        const authorFallback = $('span.author a').text().trim();
+        if (authorFallback) {
+          match.authors = [this.decodeUnicode(authorFallback)];
+        }
       }
+
+      // Published Date
+      let publishedDate = null;
+      try {
+        const dateText = $('dt:contains("Data wydania:")').next('dd').text().trim();
+        if (dateText) {
+          publishedDate = new Date(dateText);
+        } else {
+          const firstPubDateText = $('dt[data-original-title="Data pierwszego wydania polskiego"]').next('dd').text().trim();
+          if (firstPubDateText) {
+            publishedDate = new Date(firstPubDateText);
+          }
+        }
+      } catch (error) {
+        console.error('Error extracting published date:', error.message);
+      }
+
+      // Pages
+      let pages = null;
+      const pagesText = $('span.book__pages.pr-2').text().trim();
+      const pageMatch = pagesText.match(/(\d+)\s*str/);
+      if(pageMatch) {
+          pages = parseInt(pageMatch[1]);
+      } else {
+        const pagesDt = $('dt:contains("Liczba stron:")').next('dd').text().trim();
+        if(pagesDt) pages = parseInt(pagesDt);
+      }
+
 
       const translator = this.extractTranslator($);
 
-      const fullMetadata = {
+      // Narrator
+      const narrator = $('dt:contains("Lektor:")').next('dd').text().trim() || null;
+
+      // Duration
+      let duration = null;
+      const durationSpan = $('span.book__hours');
+      if (durationSpan.length > 0) {
+        const hours = parseInt(durationSpan.find('span:first-child').text()) || 0;
+        const minutes = parseInt(durationSpan.find('span:nth-child(2)').text()) || 0;
+        duration = (hours * 3600) + (minutes * 60);
+      } else {
+         const durationText = $('dt:contains("Czas trwania:")').next('dd').text().trim();
+         const matchDur = durationText.match(/(\d+)\s*godz.*?(\d+)?\s*min/i);
+         if (matchDur) {
+            const hours = parseInt(matchDur[1]) || 0;
+            const minutes = parseInt(matchDur[2]) || 0;
+            duration = (hours * 60 + minutes) * 60;
+         }
+      }
+
+
+      return {
         ...match,
         cover,
         description: this.enrichDescription(description, pages, publishedDate, translator),
@@ -212,22 +280,23 @@ class LubimyCzytacProvider {
         publisher,
         publishedDate,
         rating,
-        series,
-        seriesIndex,
+        series: seriesName, 
+        seriesIndex,     
         genres,
         tags,
+        narrator,
+        duration,
         identifiers: {
           isbn,
           lubimyczytac: match.id,
         },
       };
-
-      return fullMetadata;
     } catch (error) {
       console.error(`Error fetching full metadata for ${match.title}:`, error.message, error.stack);
       return match;
     }
   }
+
 
   extractSeriesName(seriesElement) {
     if (!seriesElement) return null;
@@ -240,30 +309,12 @@ class LubimyCzytacProvider {
     return match ? parseInt(match[1]) : null;
   }
 
-  extractPublishedDate($) {
-    const dateText = $('dt[title*="Data pierwszego wydania"]').next('dd').text().trim();
-    return dateText ? new Date(dateText) : null;
-  }
-
-  extractPages($) {
-    try {
-      const pagesText = $('script[type="application/ld+json"]').text();
-      if (pagesText) {
-        const data = JSON.parse(pagesText);
-        return data.numberOfPages || null;
-      }
-    } catch (error) {
-      console.error('Error parsing JSON for pages:', error.message);
-    }
-    return null;
-  }
-
   extractTranslator($) {
     return $('dt:contains("Tłumacz:")').next('dd').find('a').text().trim() || null;
   }
 
   extractGenres($) {
-    const genreText = $('.book__category.d-sm-block.d-none').text().trim();
+    const genreText = $('a.book__category').text().trim();
     return genreText ? genreText.split(',').map(genre => genre.trim()) : [];
   }
 
@@ -272,6 +323,7 @@ class LubimyCzytacProvider {
   }
 
   stripHtmlTags(html) {
+    if(!html) return '';
     return html.replace(/<[^>]*>/g, '');
   }
 
@@ -280,19 +332,20 @@ class LubimyCzytacProvider {
 
     if (enrichedDescription === "Ta książka nie posiada jeszcze opisu.") {
       enrichedDescription = "Brak opisu.";
-    } else {
-      if (pages) {
-        enrichedDescription += `\n\nKsiążka ma ${pages} stron.`;
-      }
-
-      if (publishedDate) {
-        enrichedDescription += `\n\nData pierwszego wydania: ${publishedDate.toLocaleDateString()}`;
-      }
-
-      if (translator) {
-        enrichedDescription += `\n\nTłumacz: ${translator}`;
-      }
+    } 
+    
+    if (pages) {
+      enrichedDescription += `\n\nKsiążka ma ${pages} stron.`;
     }
+
+    if (publishedDate) {
+      enrichedDescription += `\n\nData pierwszego wydania: ${publishedDate.toLocaleDateString()}`;
+    }
+
+    if (translator) {
+      enrichedDescription += `\n\nTłumacz: ${translator}`;
+    }
+    
 
     return enrichedDescription;
   }

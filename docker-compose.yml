@@ -1,0 +1,9 @@
+version: '3.8'
+
+services:
+  audiobookshelf-lubimyczytac-scrapper:
+    image: ghcr.io/craftwork2720/lubimyczytac-abs:latest
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production

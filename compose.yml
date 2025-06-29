@@ -1,8 +1,0 @@
----
-services:
-  lubimyczytac-abs:
-    image: lakafior/lubimyczytac-abs
-    container_name: lubimyczytac-abs
-    restart: unless-stopped
-    ports:
-      - "3000:3000"

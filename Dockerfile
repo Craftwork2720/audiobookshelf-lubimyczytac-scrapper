@@ -1,10 +1,7 @@
-FROM node:lts-alpine AS build
+FROM node:20-alpine
 WORKDIR /app
-COPY package.json server.js ./
-RUN npm install && npm run build
-
-FROM node:lts-alpine
-WORKDIR /app
-COPY --from=build /app/dist/server.js ./
+COPY package*.json ./
+RUN npm install
+COPY . .
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD [ "npm", "start" ]

@@ -2,9 +2,7 @@ version: '3.8'
 
 services:
   audiobookshelf-lubimyczytac-scrapper:
-    build:
-      context: .
-  #  image: ghcr.io/craftwork2720/audiobookshelf-lubimyczytac:latest
+    image: ghcr.io/craftwork2720/audiobookshelf-lubimyczytac:latest
     ports:
       - "3000:3000"
     environment:

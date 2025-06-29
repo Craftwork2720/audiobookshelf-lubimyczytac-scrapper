@@ -1,7 +1,7 @@
 {
   "name": "audiobookshelf-lubimyczytac-scrapper",
   "version": "1.0.0",
-  "description": "lubimyczytac data scraping",
+  "description": "lubimyczytac data scraping for audiobookshelf",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
